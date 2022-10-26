@@ -1,0 +1,283 @@
+---
+title: "(week 2 lecture 1) tidyverse"
+author: "Divya Shridar"
+date: "10/19/2022"
+output: html_document
+---
+
+## Package Installation
+
+```{r Packages}
+library(tidyverse)
+library(dplyr)
+```
+
+## Setup Workplace
+```{r}
+# path <- dirname(rstudioapi::getSourceEditorContext()$path) # get path where this current r markdown is located
+# input_dir <- path
+# setwd(path) # set working directory to current path
+```
+
+## Import Data as Tibble
+
+```{r Data Import}
+LP_full <- read.csv('London_Paris_full.csv',
+                      header = TRUE)
+head(LP_full)
+
+geno_data <- read.csv('London_Paris_Jan_geno.csv', 
+                      header = TRUE)
+head(geno_data)
+```
+
+## Save as Tibble
+
+```{r As Tibble}
+LP_Jan_geno <- as_tibble(geno_data)
+```
+## Explore Dataset
+
+```{r}
+dim(LP_Jan_geno) # has 500 rows and 14 columns
+str(LP_Jan_geno) # columns include factor, doubles, integers and a logical; NAs present as well.
+sum(is.na(LP_Jan_geno$X2)) # 500 of 500 is NA
+
+  # to note:
+    # date not coded in required format of YYYYMMDD
+    # contains SNP data coded as integers
+    # there is a column X2 that seeems to only contain NA
+```
+
+## Begin Steps 
+
+### Obtain the relevant characteristics from the London_Paris_full data for the genotyped samples contained in London_Paris_Jan_geno
+```{r}
+# we need specific columns of "sample_id","dob","dor","dod","dodiag","cc_status","smoke_status","vit_status","a_sta_smok","a_quit_smok","age_recr"
+
+required_colnames<-c("sample_id",
+                     "dob",
+                     "dor",
+                     "dod",
+                     "dodiag",
+                     "cc_status",
+                     "smoke_status",
+                     "vit_status",
+                     "a_sta_smok",
+                     "a_quit_smok",
+                     "age_recr")
+#length(required_colnames) #11; just to check
+
+# we also want all rows of LP_Jan_geno aka for each sample id
+required_samples<-LP_Jan_geno$sample_id
+#length(required_samples) # 500; just to check
+
+# filter to get relevant information in new object
+  # via filter(data, ) from LP_full for rows
+  # via select for specific columns for columns
+London_Paris_Jan_info <- filter(LP_full,
+                                 sample_id %in% required_samples) %>% 
+  select(required_colnames)
+head(London_Paris_Jan_info) # 500 rows and 11 cols
+```
+
+### Merge the genotype information to the data obtained in the previous step, making sure that we don’t mix up the sample_ids.
+```{r}
+# prepare info to be merged
+London_Paris_Jan_geno <- LP_Jan_geno %>% select(sample_id,  # all the columns we want to keep
+                                                starts_with("SNP")) 
+London_Paris_Jan_geno
+London_Paris_Jan_info
+
+# merge via merge()
+  # alternative is left join!
+  # LP_Jan_info_geno <- left_join(London_Paris_Jan_info, London_Paris_Jan_geno, by="sample_id")
+LP_Jan_info_geno <- merge(London_Paris_Jan_info,
+                          London_Paris_Jan_geno,
+                          by = "sample_id") # make sure we join on appropriate column aka the sample_id is common across both datasets
+
+LP_Jan_info_geno # 500 rows, 16 columns
+```
+
+### Transform relevant columns into factors and dates
+```{r}
+# transform via mutate()
+LP_Jan_info_geno <- LP_Jan_info_geno %>% mutate(
+  sample_id = as.character(sample_id), # was already character tho
+  dob = as.Date(dob,"%d%b%Y"), # change character to date via as.Date
+  dor = as.Date(dor,"%d%b%Y"),
+  dod = as.Date(dod,"%d%b%Y"),
+  dodiag = as.Date(dodiag,"%d%b%Y"),
+  cc_status = as.factor(cc_status), # change binary integer (0/1) to factor
+  smoke_status = as.factor(smoke_status),
+  vit_status = as.factor(vit_status)
+)
+
+LP_Jan_info_geno
+```
+### Recode all dates so that they are in the format YYYYMMDD
+```{r}
+# use mutate again to apply a function
+  # first write function so that can be applied to all rows
+    # want to change 1928-12-27	to YYYYMMDD aka remove hyphens
+sub_hifen <- function(x){
+  x <- str_replace_all(x, "-", "") # applies to single row
+    # str_replace_all better than str_replace that only replaces first -
+  #print(x) #just for my checking
+}
+
+  # second, mutate so apply to all rows
+LP_Jan_info_geno <- LP_Jan_info_geno %>%
+  mutate_at(vars(starts_with("d")), # mutate at columns that start with d via vars()
+            sub_hifen) # function to be applied
+
+LP_Jan_info_geno
+```
+
+### Make sure 120 and 19000101 are coded when required
+```{r}
+# dod should be coded as 19000101 for alive participants;
+  # use if else
+# dodiag should be coded as 19000101 for controls;
+# a_sta_smok should be coded as 120 for never smokers;
+# a_quit_smok should be coded as 120 for current and never smokers.
+
+LP_Jan_info_geno <- LP_Jan_info_geno %>% 
+  mutate(dod = ifelse(vit_status == 1 & is.na(dod), # alive participants
+                      19000101, # change if yes
+                      dod), # keep current val if no
+         dodiag = ifelse(cc_status == 0 & is.na(dodiag),
+                         19000101,
+                         dodiag),
+         a_sta_smok = ifelse(smoke_status==1 & is.na(a_sta_smok),
+                             120,
+                             a_sta_smok),
+         a_quit_smok = ifelse(is.na(a_quit_smok) & (smoke_status == 1 | smoke_status == 3),
+                              120,
+                              a_quit_smok))
+LP_Jan_info_geno
+```
+
+### Confirm that the levels of the data are as expected. For example, there is no other level then 3 in the smoke_status column or that there are only two levels in the vit_status column
+```{r}
+# Recall that the levels should be as follows:
+  # cc_status, 0-controls, 1-cases
+  # smoke_status, 1-never smokers, 2-former smokers, 3-current smokers
+  # vit_status, 1-alive, 2-dead
+  # SNP colums should only have 3 levels, 0,1 and 2.
+
+# check via lapply(X = , FUN = )
+inspect_levels <- select(LP_Jan_info_geno, # df to select from 
+                         cc_status, # required columns to check
+                         smoke_status, # required columns to check
+                         vit_status, # required columns to check
+                         starts_with("SNP"))  %>%  
+  lapply(table) # get a table summary of counts of the values for each column to check for
+inspect_levels
+
+# apply() - applies a function over an array of margins
+# lapply() - applies a function over a list or a vector
+# sapply() - is a friendlier version of lapply and allows us to return, when appropriate, a vector or a matrix. In the example above we could have used sapply as well.
+
+  # Essentially, the choice of the _apply() function will depend on what is your input and what you want as an output.
+  # In this case we wanted to return a list where each element of the list contains a table with the counts for each column of interest. 
+  # lapply() returns a list. 
+  # We can use also use the sapply function and the apply() functions here as well and will obtain the same result.
+```
+
+```{r}
+# From what we can see the columns smoke_status and vit_status have some unwanted categories. 
+  # We will remove these from our data by filtering them out
+LP_Jan_info_geno <- LP_Jan_info_geno %>%
+                        filter(smoke_status!=4, # remove where =4
+                               vit_status %in% c(1,2)) # keep only where 1 and 2
+
+dim(LP_Jan_info_geno) # 485 rows,  16 columns
+
+# check filtered columns
+table(LP_Jan_info_geno$smoke_status)
+table(LP_Jan_info_geno$vit_status)
+```
+
+### Check if there are any NAs remaining
+```{r}
+# sum NA present in each column
+NA_test <- select(LP_Jan_info_geno,
+                  sample_id:age_recr) %>% 
+  lapply(is.na) %>% # gives FALSE/TRUE for every row in every column chosen above
+  sapply(sum,
+         simplify = TRUE) # more consolidated table instead of single row
+NA_test # NA present in a_sta_smok and a_quit_smok
+
+# remove NA present via filter()
+LP_Jan_info_geno <- filter(LP_Jan_info_geno,
+                           !is.na(a_sta_smok), # true for is not NA
+                           !is.na(a_quit_smok))
+dim(LP_Jan_info_geno) #326 rows, 16 columns
+```
+
+### Arranging our data by cc_status and sample_id so that controls appear first.
+```{r}
+# arrange rows by columns via arrange()
+LP_Jan_info_geno
+LP_Jan_info_geno <- arrange(LP_Jan_info_geno,
+                            cc_status, # rows ascend from this first
+                            sample_id) # within each cc_status category, ascending via sample_id
+LP_Jan_info_geno
+```
+
+### Save our final object as an .rds object.
+```{r}
+# save as an r data file
+saveRDS(LP_Jan_info_geno,
+        "London_Paris_info_geno.rds")
+```
+
+## Challenge
+```{r}
+LP_Jan_info_geno
+London_Paris_info_geno_checked <- filter(LP_Jan_info_geno,
+       dodiag>dor & ### the date of diagnosis has to be greater than the recruitment date
+         dodiag>dob & ### the date of diagnosis has to be greater than the birth date
+         dor>dob & ### the recruitment date has to be greater than the birth date
+         dod>dor &  ### the date of death has to be greater than the recruitment date
+         ifelse(cc_status==1 & vit_status==2, ### if a patient has been diagnosed with lung cancer and the patient died, than the death date has to be greater than the diagnosis date
+                dod>dodiag,
+                TRUE) &
+       ifelse(vit_status==1,# if the vital_status = 1 then no death date should be observed
+              dod==19000101,
+              TRUE) &
+       ifelse(vit_status==2,# if the vital_status = 2 then a death date should be observed
+              dod!=19000101,
+              TRUE) &
+       ifelse(dod!=19000101, #if there is a death date then the death date should be greater than the birth date
+              dod>dob,
+              TRUE) &
+         ifelse(cc_status==1, # if an observation is a case then there must be a diagnosis date
+                is.na(dodiag)!=TRUE,
+                TRUE) &
+         ifelse(cc_status==0, # if an observations is not a case then there shouldn’t be a diagnosis date
+                is.na(dodiag)==TRUE,
+                TRUE) &
+         ifelse(smoke_status==2 | smoke_status==3,
+               a_sta_smok!=120,
+               TRUE) &
+         ifelse(smoke_status==2,
+                a_quit_smok!=120,
+                TRUE) &
+         ifelse(smoke_status==2,
+                a_quit_smok>=a_sta_smok,
+                TRUE)) 
+```
+
+```{r}
+dim(London_Paris_info_geno_checked) # 48 rows, 16 columns?
+London_Paris_info_geno_checked
+```
+
+```{r}
+# save
+saveRDS(London_Paris_info_geno_checked,
+        "London_Paris_info_geno_checked.rds")
+```
+
