@@ -1,4 +1,4 @@
-# -3-translational-data-science-part-1
+# Translational Data Science Part 1
 Translational Data Science module as part of MSc Health Data Analytics and Machine Learning
 
 # Files
